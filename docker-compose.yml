@@ -1,0 +1,35 @@
+version: "3.9"
+
+services:
+  app:
+    image: crow-hospital:latest
+    container_name: crow_hospital_app
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - hms_data:/app/data   # Named volume for database persistence
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  nginx:
+    image: nginx:stable
+    container_name: crow_hospital_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  hms_data:
