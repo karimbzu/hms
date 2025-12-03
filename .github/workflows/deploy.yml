@@ -18,7 +18,7 @@ jobs:
 
     - name: Login to Railway Container Registry
       run: |
-        echo "${{ secrets.RAILWAY_API_KEY }}" | docker login registry.railway.app -u _ --password-stdin
+        echo "${{ secrets.RAILWAY_API_KEY }}" | docker login registry.railway.app -u karimbzu --password-stdin
 
     - name: Build Docker image
       run: |
