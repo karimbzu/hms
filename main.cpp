@@ -354,6 +354,6 @@ loadDoctors(); loadPatients(); renderChart();
     });
 
     // Bind to 0.0.0.0 so other containers/host can reach it
-    app.bindaddr("0.0.0.0").port(8080).multithreaded().run();
+    app.bindaddr("0.0.0.0").port(3000).multithreaded().run();
     return 0;
 }
