@@ -22,15 +22,15 @@ jobs:
 
     - name: Build Docker image
       run: |
-        docker build -t registry.railway.app/<your-project-id>/<your-service-name>:latest .
+        docker build -t registry.railway.app/hms/hms:latest .
 
     - name: Push Docker image to Railway
       run: |
-        docker push registry.railway.app/<your-project-id>/<your-service-name>:latest
+        docker push registry.railway.app/hms/hms:latest
 
     - name: Deploy to Railway
       run: |
         curl -X POST https://backboard.railway.app/api/v1/services/<your-service-id>/deploy \
           -H "Authorization: Bearer ${{ secrets.RAILWAY_API_KEY }}" \
           -H "Content-Type: application/json" \
-          -d '{"image": "registry.railway.app/<your-project-id>/<your-service-name>:latest"}'
+          -d '{"image": "registry.railway.app/hms/hms:latest"}'
