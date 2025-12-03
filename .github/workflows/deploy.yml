@@ -10,11 +10,11 @@ jobs:
     runs-on: ubuntu-latest
     container: ghcr.io/railwayapp/cli:latest
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_API_KEY }}
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
       SERVICE_NAME: hms   # replace with your real service name
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
 
       - name: Deploy to Railway
-        run: railway up --service=$SERVICE_NAME --environment production
+        run: railway up --service=hms --environment production
