@@ -1,1 +1,1 @@
-A Hopital Management System By Gaggo
+A Hopital Management System By Gaggo Rani
