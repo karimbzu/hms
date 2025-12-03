@@ -3,18 +3,29 @@ name: Deploy to Railway
 on:
   push:
     branches:
-      - master   # or main — change if your default branch is named differently
+      - main
+  workflow_dispatch:
+
+env:
+  SERVICE_NAME: hms
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    container: ghcr.io/railwayapp/cli:latest
-    env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-      SERVICE_NAME: hms   # replace with your real service name
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
 
-      - name: Deploy to Railway
-        run: railway up --service=hms --environment production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install Railway CLI
+      run: |
+        curl -fsSL https://railway.app/install.sh | sh
+
+    - name: Verify Railway version
+      run: railway --version
+
+    - name: Deploy to Railway
+      env:
+        RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      run: |
+        railway up --service=$SERVICE_NAME --environment production
