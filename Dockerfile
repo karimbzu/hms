@@ -42,6 +42,6 @@ COPY --from=builder /app/build/crow_sqlite_crud /app/crow_sqlite_crud
 # Persistent DB folder
 RUN mkdir -p /app/data
 
-EXPOSE 8080
+EXPOSE 3000
 
 CMD ["./crow_sqlite_crud"]
