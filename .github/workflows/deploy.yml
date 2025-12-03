@@ -3,34 +3,18 @@ name: Deploy to Railway
 on:
   push:
     branches:
-      - master  # Trigger deployment on pushes to main branch
+      - master   # or main — change if your default branch is named differently
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
-
+    container: ghcr.io/railwayapp/cli:latest
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      SERVICE_NAME: hms   # replace with your real service name
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to Railway Container Registry
-      run: |
-        echo "${{ secrets.RAILWAY_API_KEY }}" | docker login registry.railway.app -u karimbzu --password-stdin
-
-    - name: Build Docker image
-      run: |
-        docker build -t registry.railway.app/hms/hms:latest .
-
-    - name: Push Docker image to Railway
-      run: |
-        docker push registry.railway.app/hms/hms:latest
-
-    - name: Deploy to Railway
-      run: |
-        curl -X POST https://backboard.railway.app/api/v1/services/<your-service-id>/deploy \
-          -H "Authorization: Bearer ${{ secrets.RAILWAY_API_KEY }}" \
-          -H "Content-Type: application/json" \
-          -d '{"image": "registry.railway.app/hms/hms:latest"}'
+      - name: Deploy to Railway
+        run: railway up --service=$SERVICE_NAME --environment production
