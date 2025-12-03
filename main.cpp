@@ -62,7 +62,7 @@ CROW_ROUTE(app, "/")([]() {
     page << R"(
     <html>
     <head>
-        <title>Welcome — Hospital Management</title>
+        <title>Welcome — Hospital Management (HMS) </title>
         <style>
             body { font-family: Arial, sans-serif; background: #f7fbff; display:flex; align-items:center; justify-content:center; height:100vh; }
             .box { width:420px; background:white; padding:24px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.08); text-align:center; }
