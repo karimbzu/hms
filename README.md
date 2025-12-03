@@ -1,1 +1,1 @@
-A Hopital Management System By Gaggo Rani
+A Hopital Management System By Simrah Ahmad
