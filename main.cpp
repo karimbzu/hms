@@ -1,359 +1,622 @@
-#include "crow.h"
+#include "crow.h"     // including crow frameword
 #include <sqlite3.h>
-#include <mutex>
-#include <string>
-#include <filesystem>
 #include <iostream>
+#include <sstream>
 
-using namespace std;
-
-static constexpr const char* DB_PATH = "/app/data/hospital.db";
-
-// Initialize DB and tables if missing
-void init_db_if_needed() {
-    std::filesystem::create_directories("/app/data");
-    sqlite3* db = nullptr;
-    if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) {
-        if (db) sqlite3_close(db);
-        throw runtime_error("Unable to open database for initialization");
+int main()
+{
+    crow::SimpleApp app;
+      bool isLoggedIn = false;
+    // Initialize SQLite database
+    sqlite3 *db;
+    if (sqlite3_open("hms.db", &db))
+    {
+        std::cerr << "Can't open database: " << sqlite3_errmsg(db) << std::endl;
+        return 1;
     }
 
-    const char* sql = R"SQL(
-CREATE TABLE IF NOT EXISTS doctors (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  specialty TEXT
-);
-CREATE TABLE IF NOT EXISTS patients (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  ailment TEXT,
-  doctor_id INTEGER DEFAULT 0
-);
-)SQL";
+    // Create table if not exists
+    const char *create_table_sql =
+        "CREATE TABLE IF NOT EXISTS users ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "name TEXT NOT NULL, "
+        "phone TEXT NOT NULL, "
+        "disease TEXT NOT NULL, "
+        "date TEXT NOT NULL);";
 
-    char* err = nullptr;
-    if (sqlite3_exec(db, sql, nullptr, nullptr, &err) != SQLITE_OK) {
-        string e = err ? err : string("unknown");
-        sqlite3_free(err);
-        sqlite3_close(db);
-        throw runtime_error("DB init failed: " + e);
+    const char *create_accounts_table =
+       "CREATE TABLE IF NOT EXISTS accounts ("
+       "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+       "username TEXT NOT NULL UNIQUE, "
+       "password TEXT NOT NULL);";
+
+
+      char *errMsg = nullptr;
+      if (sqlite3_exec(db, create_accounts_table, nullptr, nullptr, &errMsg) != SQLITE_OK)
+      {
+          std::cerr << "SQL error: " << errMsg << std::endl;
+         sqlite3_free(errMsg);
+      }
+
+      // Insert default admin only if table empty
+      sqlite3_stmt *checkStmt;
+      sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM accounts;", -1, &checkStmt, nullptr);
+      sqlite3_step(checkStmt);
+      int count = sqlite3_column_int(checkStmt, 0);
+     sqlite3_finalize(checkStmt);
+
+     if (count == 0)
+    {
+       sqlite3_exec(db, "INSERT INTO accounts (username, password) VALUES ('admin', '1234');", nullptr, nullptr, nullptr);
     }
+
+
+    if (sqlite3_exec(db, create_table_sql, nullptr, nullptr, &errMsg) != SQLITE_OK)
+    {
+       std::cerr << "SQL error: " << errMsg << std::endl;
+        sqlite3_free(errMsg);
+    }
+// Public landing page (accessible by everyone)
+CROW_ROUTE(app, "/")([]() {
+    std::ostringstream page;
+    page << R"(
+    <html>
+    <head>
+        <title>Welcome — Hospital Management</title>
+        <style>
+            body { font-family: Arial, sans-serif; background: #f7fbff; display:flex; align-items:center; justify-content:center; height:100vh; }
+            .box { width:420px; background:white; padding:24px; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,0.08); text-align:center; }
+            a { display:inline-block; margin:10px; padding:10px 16px; border-radius:6px; text-decoration:none; border:1px solid #007bff; color:#007bff; }
+            a.primary { background:#007bff; color:white; border:none; }
+        </style>
+    </head>
+    <body>
+        <div class='box'>
+            <h1>Welcome to HMS</h1>
+            <p>Manage patient appointments and records quickly.</p>
+            <div>
+                <a href="/login" class="primary">Login</a>
+                <a href="/about">About</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    )";
+    return crow::response(page.str());
+});
+
+CROW_ROUTE(app, "/login")([]() {
+    std::ostringstream page;
+    page << R"(
+    <html>
+    <head>
+        <title>Login Page</title>
+        <style>
+            body {
+                font-family: Arial;
+                background: #e9f0ff;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                height: 100vh;
+            }
+            .box {
+                width: 350px;
+                background: white;
+                padding: 25px;
+                border-radius: 10px;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            }
+            input, button {
+                width: 100%;
+                padding: 10px;
+                margin: 8px 0;
+                border-radius: 5px;
+                border: 1px solid #aaa;
+            }
+            button {
+                background: #007bff;
+                color: white;
+                border: none;
+                cursor: pointer;
+            }
+        </style>
+    </head>
+    <body>
+        <div class='box'>
+            <h2 style='text-align:center;'>Login</h2>
+            <input id='username' placeholder='Enter username'>
+            <input id='password' type='password' placeholder='Enter password'>
+            <button onclick='login()'>Login</button>
+        </div>
+
+        <script>
+            async function login() {
+                let username = document.getElementById("username").value;
+                let password = document.getElementById("password").value;
+
+                let res = await fetch("/auth", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (res.status === 200) {
+                    window.location.href = "/dashboard";
+                } else {
+                    alert("Incorrect Username or Password!");
+                }
+            }
+        </script>
+    </body>
+    </html>
+    )";
+    return crow::response(page.str());
+});
+CROW_ROUTE(app, "/logout")([&](){
+    isLoggedIn = false;
+    return crow::response(302, "<script>window.location='/login';</script>");
+});
+
+CROW_ROUTE(app, "/about")([]() {
+    std::ostringstream page;
+    page << R"(
+    <html>
+    <head>
+        <title>About Us - HMS</title>
+        <style>
+            body {
+                margin: 0;
+                font-family: 'Segoe UI', sans-serif;
+                background: linear-gradient(135deg, #6dd5fa, #ffffff);
+            }
+            .container {
+                width: 85%;
+                margin: 50px auto;
+                background: white;
+                padding: 40px;
+                border-radius: 16px;
+                box-shadow: 0 12px 25px rgba(0,0,0,0.15);
+            }
+            h1 {
+                text-align: center;
+                color: #007bff;
+                margin-bottom: 10px;
+            }
+            .subtitle {
+                text-align: center;
+                color: #555;
+                margin-bottom: 30px;
+                font-size: 18px;
+            }
+            .section {
+                margin-top: 30px;
+            }
+            .section h2 {
+                color: #333;
+                border-left: 5px solid #007bff;
+                padding-left: 10px;
+            }
+            .section p {
+                color: #555;
+                line-height: 1.8;
+                font-size: 16px;
+            }
+            .cards {
+                display: flex;
+                gap: 20px;
+                margin-top: 25px;
+                flex-wrap: wrap;
+            }
+            .card {
+                flex: 1;
+                background: #f5f9ff;
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+                min-width: 220px;
+            }
+            .card h3 {
+                color: #007bff;
+                margin-bottom: 10px;
+            }
+            .back-btn {
+                margin-top: 40px;
+                display: inline-block;
+                padding: 12px 20px;
+                background: #007bff;
+                color: white;
+                border-radius: 8px;
+                text-decoration: none;
+                transition: 0.3s;
+            }
+            .back-btn:hover {
+                background: #0056b3;
+            }
+            footer {
+                text-align: center;
+                margin-top: 40px;
+                color: #777;
+                font-size: 14px;
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="container">
+            <h1>About Our Hospital Management System</h1>
+            <div class="subtitle">Smart Healthcare | Simple Management | Secure Records</div>
+
+            <div class="section">
+                <h2>Our Mission</h2>
+                <p>
+                    Our mission is to simplify hospital operations through a modern, secure,
+                    and user-friendly Hospital Management System that improves efficiency,
+                    reduces paperwork, and ensures better patient care.
+                </p>
+            </div>
+
+            <div class="section">
+                <h2>What We Do</h2>
+                <p>
+                    Our HMS helps hospitals manage patient records, appointments, and medical
+                    data digitally with accuracy and speed. It allows staff to focus more on
+                    patient care rather than manual documentation.
+                </p>
+            </div>
+
+            <div class="section">
+                <h2>Why Choose Us?</h2>
+                <div class="cards">
+                    <div class="card">
+                        <h3>✅ Secure Data</h3>
+                        <p>All patient data is safely stored with proper authentication.</p>
+                    </div>
+                    <div class="card">
+                        <h3>⚡ Fast Access</h3>
+                        <p>Quick access to appointments and records in real time.</p>
+                    </div>
+                    <div class="card">
+                        <h3>💻 User Friendly</h3>
+                        <p>Simple interface that anyone can use without training.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>Our Vision</h2>
+                <p>
+                    We aim to digitize healthcare services and make hospital operations smarter,
+                    faster, and more reliable for both patients and healthcare professionals.
+                </p>
+            </div>
+
+            <center>
+                <a href="/" class="back-btn">← Back to Home</a>
+            </center>
+
+            <footer>
+                © 2025 Hospital Management System | Developed for Academic Project
+            </footer>
+        </div>
+    </body>
+    </html>
+    )";
+    return crow::response(page.str());
+});
+
+
+CROW_ROUTE(app, "/auth").methods("POST"_method)([&](const crow::request& req){
+    auto data = crow::json::load(req.body);
+    if (!data || !data.has("username") || !data.has("password"))
+        return crow::response(400, "Invalid");
+
+    std::string username = data["username"].s();
+    std::string password = data["password"].s();
+
+    sqlite3_stmt *stmt;
+    sqlite3_prepare_v2(db, "SELECT * FROM accounts WHERE username=? AND password=?;", -1, &stmt, nullptr);
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_text(stmt, 2, password.c_str(), -1, SQLITE_STATIC);
+
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) ok = true;
+
+    sqlite3_finalize(stmt);
+
+    if (ok) {
+        isLoggedIn = true;
+        return crow::response(200, "Login OK");
+    }
+
+    return crow::response(401, "Invalid credentials");
+});
+//Home page
+CROW_ROUTE(app, "/dashboard")([&]() {
+    if (!isLoggedIn)
+        return crow::response(302, "<script>window.location='/login';</script>");
+        std::ostringstream page;
+        page << R"(
+            <html>
+            <head>
+                              <title>Home Page</title>
+             <style>
+                    body {
+                        font-family: Arial, sans-serif;
+                        background:url('hms.png');
+                        background-size: cover;
+                        margin: 0;
+                        padding: 0;
+                    }
+                    .container {
+                        width: 80%;
+                        margin: 40px auto;
+                        background: #fff;
+                        border-radius: 10px;
+                        padding: 20px 40px;
+                        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+                    }
+                    h2, h3 {
+                        text-align: center;
+                        color: #333;
+                    }
+                    input, button {
+                        padding: 10px;
+                        margin: 5px;
+                        border-radius: 5px;
+                        border: 1px solid #ccc;
+                        font-size: 14px;
+                    }
+                    button {
+                        cursor: pointer;
+                        background-color: #007bff;
+                        color: white;
+                        border: none;
+                        transition: 0.2s;
+                    }
+                    button:hover {
+                        background-color: #0056b3;
+                    }
+                    table {
+                        width: 100%;
+                        border-collapse: collapse;
+                        margin-top: 20px;
+                    }
+                    th, td {
+                        padding: 10px;
+                        border: 1px solid #ddd;
+                        text-align: center;
+                    }
+                    th {
+                        background-color: #007bff;
+                        color: white;
+                    }
+                    tr:nth-child(even) {
+                        background-color: #f9f9f9;
+                    }
+                    .action-btn {
+                        padding: 6px 12px;
+                        font-size: 13px;
+                        border-radius: 4px;
+                        margin: 2px;
+                    }
+                    .edit-btn {
+                        background-color: #28a745;
+                        color: white;
+                        border: none;
+                    }
+                    .edit-btn:hover {
+                        background-color: #1e7e34;
+                    }
+                    .delete-btn {
+                        background-color: #dc3545;
+                        color: white;
+                        border: none;
+                    }
+                    .delete-btn:hover {
+                        background-color: #b02a37;
+                    }
+                    .top-right-icon {
+                       position: absolute;
+                       top: 15px;
+                       right: 20px;
+                    }
+                    .top-right-icon img {
+                            width: 40px;
+                            height: 40px;
+                            cursor: pointer;
+                    }
+                </style>
+                <script>
+                    async function addUser() {
+                        const name = document.getElementById("name").value;
+                        const phone = document.getElementById("phone").value;
+                        const disease = document.getElementById("disease").value;
+                        const date = document.getElementById("date").value;
+                        if (!name || !phone || !disease || !date) {
+                            alert("Name, Phone number, Disease and Appointment Date are required!");
+                            return;
+                        }
+                        await fetch("/add", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ name, phone, disease, date })
+                        });
+                        document.getElementById("name").value = "";
+                        document.getElementById("phone").value = "";
+                        document.getElementById("disease").value = "";
+                        document.getElementById("date").value = "";
+                        loadUsers();
+                    }
+
+                    async function editUser(id) {
+                        const name = prompt("Enter new name:");
+                        const phone = prompt("Enter new phone number:");
+                        const disease = prompt("Enter new disease:");
+                        const date = prompt("Enter new Appointment date");
+                        if (!name || !phone || !disease || !date) {
+                            alert("All fields are required!");
+                            return;
+                        }
+                        await fetch("/edit", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ id, name, phone, disease, date })
+                        });
+                        loadUsers();
+                    }
+
+                    async function deleteUser(id) {
+                        if (!confirm("Are you sure you want to delete this user?")) return;
+                        await fetch("/delete", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ id })
+                        });
+                        loadUsers();
+                    }
+
+                    async function loadUsers() {
+                        const res = await fetch("/users");
+                        const users = await res.json();
+                        let html = "<table><tr><th>ID</th><th>Name</th><th>Phone Number</th><th>Disease</th><th>Appointment Date</th><th>Actions</th></tr>";
+                        for (const u of users) {
+                            html += `<tr>
+                                        <td>${u.id}</td>
+                                        <td>${u.name}</td>
+                                        <td>${u.phone}</td>
+                                        <td>${u.disease}</td>
+                                        <td>${u.date}</td>
+                                        <td>
+                                            <button class='action-btn edit-btn' onclick='editUser(${u.id})'>Edit</button>
+                                            <button class='action-btn delete-btn' onclick='deleteUser(${u.id})'>Delete</button>
+                                        </td>
+                                     </tr>`;
+                        }
+                        html += "</table>";
+                        document.getElementById("users").innerHTML = html;
+                    }
+
+                    window.onload = loadUsers;
+                </script>
+            </head>
+            <body>
+                <div class='top-right-icon'>
+                <img src='https://cdn-icons-png.flaticon.com/512/3135/3135715.png' alt='icon'>
+                </div>
+                <div class='container'>
+                    <h2>Hospital Management System</h2>
+                    <div style='text-align:center; margin-top:20px;'>
+                        <input type='text' id='name' placeholder='Enter name'>
+                        <input type='text' id='phone' placeholder='Enter phone number'>
+                        <input type='text' id='disease' placeholder='Enter disease'>
+                        <input type='text' id='date' placeholder='Enter Appointment Date'>
+                        <button onclick='addUser()'>Add Patient</button>
+                    </div>
+
+                    <hr>
+                    <h3>All Patients</h3>
+                    <div id='users'></div>
+                </div>
+            </body>
+            </html>
+        )";
+        return crow::response(page.str());
+    });
+ // Add User
+    CROW_ROUTE(app, "/add").methods("POST"_method)([db](const crow::request &req) {
+        auto body = crow::json::load(req.body);
+        if (!body || !body.has("name") || !body.has("phone") || !body.has("disease") || !body.has("date"))
+            return crow::response(400, "Invalid input");
+
+        std::string name = body["name"].s();
+        std::string phone = body["phone"].s();
+        std::string disease = body["disease"].s();
+        std::string date = body["date"].s();
+
+        std::string sql = "INSERT INTO users (name, phone, disease, date) VALUES (?, ?, ?, ?)";
+        sqlite3_stmt *stmt;
+        sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, phone.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, disease.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 4, date.c_str(), -1, SQLITE_STATIC);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        return crow::response(200, "User added");
+    });
+
+    // Edit User
+    CROW_ROUTE(app, "/edit").methods("POST"_method)([db](const crow::request &req) {
+        auto body = crow::json::load(req.body);
+        if (!body || !body.has("id") || !body.has("name") || !body.has("phone") || !body.has("disease") || !body.has("date"))
+            return crow::response(400, "Invalid input");
+
+        int id = body["id"].i();
+        std::string name = body["name"].s();
+        std::string phone = body["phone"].s();
+        std::string disease = body["disease"].s();
+        std::string date = body["date"].s();
+        std::string sql = "UPDATE users SET name=?, phone=?, disease=?, date=? WHERE id=?";
+        sqlite3_stmt *stmt;
+        sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 2, phone.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 3, disease.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_text(stmt, 4, date.c_str(), -1, SQLITE_STATIC);
+        sqlite3_bind_int(stmt, 5, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        return crow::response(200, "User updated");
+    });
+
+    // Delete User
+    CROW_ROUTE(app, "/delete").methods("POST"_method)([db](const crow::request &req) {
+        auto body = crow::json::load(req.body);
+        if (!body || !body.has("id"))
+            return crow::response(400, "Invalid input");
+
+        int id = body["id"].i();
+
+        std::string sql = "DELETE FROM users WHERE id=?";
+        sqlite3_stmt *stmt;
+        sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr);
+        sqlite3_bind_int(stmt, 1, id);
+        sqlite3_step(stmt);
+        sqlite3_finalize(stmt);
+
+        return crow::response(200, "User deleted");
+    });
+
+    // Get all users
+    CROW_ROUTE(app, "/users")([db]() {
+        crow::json::wvalue result;
+        crow::json::wvalue::list users;
+
+        const char *sql = "SELECT id, name, phone, disease, date FROM users";
+        sqlite3_stmt *stmt;
+        sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr);
+        while (sqlite3_step(stmt) == SQLITE_ROW)
+        {
+            crow::json::wvalue user;
+            user["id"] = sqlite3_column_int(stmt, 0);
+            user["name"] = (const char *)sqlite3_column_text(stmt, 1);
+            user["phone"] = (const char *)sqlite3_column_text(stmt, 2);
+            user["disease"] = (const char *)sqlite3_column_text(stmt, 3);
+            user["date"] = (const char *)sqlite3_column_text(stmt, 4);
+
+
+            users.push_back(user);
+        }
+        sqlite3_finalize(stmt);
+        result = std::move(users);
+        return crow::response(result);
+    });
+
+    app.port(3000).multithreaded().run();
+
     sqlite3_close(db);
 }
-
-int main() {
-    try {
-        init_db_if_needed();
-    } catch (const std::exception& ex) {
-        cerr << "DB init error: " << ex.what() << "";
-        // continue; health endpoint will report DB problems
-    }
-
-    crow::SimpleApp app;
-    std::mutex db_mtx;
-
-    // Embedded single-file SPA (safe delimiter)
-    static const std::string index_html = R"CROWHTML(
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hospital CRUD - Crow</title>
-  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <style>
-    body { background: linear-gradient(135deg,#e0eafc 0%,#cfdef3 100%); min-height:100vh; padding:2rem; }
-    .glass { background: rgba(255,255,255,0.6); backdrop-filter: blur(6px) saturate(120%); border-radius:12px; padding:1rem; }
-    .table-small td, .table-small th { padding:.4rem; }
-    #barChart { width:100%; height:320px; }
-  </style>
-</head>
-<body>
-<div class="container">
-  <div class="glass p-4">
-    <h1 class="mb-3">Hospital Management (Crow + C++)</h1>
-    <ul class="nav nav-tabs" id="mainTabs" role="tablist">
-      <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#doctors">Doctors</button></li>
-      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#patients">Patients</button></li>
-      <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#charts">Charts</button></li>
-    </ul>
-    <div class="tab-content mt-3">
-      <div class="tab-pane fade show active" id="doctors">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h4>Doctors</h4>
-          <div>
-            <button class="btn btn-sm btn-primary" onclick="addDoctor()">Add Doctor</button>
-            <button class="btn btn-sm btn-secondary" onclick="loadDoctors()">Refresh</button>
-          </div>
-        </div>
-        <table class="table table-striped table-small" id="doctorsTable"><thead><tr><th>ID</th><th>Name</th><th>Specialty</th><th>Actions</th></tr></thead><tbody></tbody></table>
-      </div>
-      <div class="tab-pane fade" id="patients">
-        <div class="d-flex justify-content-between align-items-center mb-2">
-          <h4>Patients</h4>
-          <div>
-            <button class="btn btn-sm btn-primary" onclick="addPatient()">Add Patient</button>
-            <button class="btn btn-sm btn-secondary" onclick="loadPatients()">Refresh</button>
-          </div>
-        </div>
-        <table class="table table-striped table-small" id="patientsTable"><thead><tr><th>ID</th><th>Name</th><th>Ailment</th><th>Doctor</th><th>Actions</th></tr></thead><tbody></tbody></table>
-      </div>
-      <div class="tab-pane fade" id="charts">
-        <h4>Patients per Doctor</h4>
-        <canvas id="barChart"></canvas>
-        <div class="mt-2"><button class="btn btn-sm btn-secondary" onclick="renderChart()">Refresh Chart</button></div>
-      </div>
-    </div>
-  </div>
-</div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script>
-async function api(path, method='GET', body=null){
-  const opts = { method, headers: {} };
-  if(body){ opts.headers['Content-Type']='application/json'; opts.body=JSON.stringify(body); }
-  const res = await fetch(path, opts);
-  if(res.status===204) return null;
-  const txt = await res.text();
-  try { return txt ? JSON.parse(txt) : null; } catch(e) { throw txt; }
-}
-
-// Doctors
-async function loadDoctors(){
-  try{
-    const data = await api('/api/doctors');
-    const tbody = document.querySelector('#doctorsTable tbody'); tbody.innerHTML='';
-    if(!Array.isArray(data)) { console.error('doctors not array', data); return; }
-    for(const d of data){
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${d.id}</td><td>${d.name}</td><td>${d.specialty}</td>` +
-        `<td><button class='btn btn-sm btn-outline-primary' onclick='editDoctor(${d.id})'>Edit</button> `+
-        `<button class='btn btn-sm btn-outline-danger' onclick='deleteDoctor(${d.id})'>Delete</button></td>`;
-      tbody.appendChild(tr);
-    }
-  }catch(e){ alert('Error loading doctors: '+e); }
-}
-async function addDoctor(){ const name=prompt('Doctor name:'); if(!name) return; const specialty=prompt('Specialty:')||''; await api('/api/doctors','POST',{name,specialty}); loadDoctors(); renderChart(); }
-async function editDoctor(id){ try{ const data=await api('/api/doctors/'+id); const name=prompt('Doctor name:',data.name); if(name===null) return; const specialty=prompt('Specialty:',data.specialty); if(specialty===null) return; await api('/api/doctors/'+id,'PUT',{name,specialty}); loadDoctors(); renderChart(); }catch(e){ alert('Error: '+e); } }
-async function deleteDoctor(id){ if(!confirm('Delete doctor #'+id+'?')) return; await api('/api/doctors/'+id,'DELETE'); loadDoctors(); renderChart(); }
-
-// Patients
-async function loadPatients(){
-  try{
-    const data = await api('/api/patients');
-    const tbody = document.querySelector('#patientsTable tbody'); tbody.innerHTML='';
-    if(!Array.isArray(data)) { console.error('patients not array', data); return; }
-    for(const p of data){
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${p.id}</td><td>${p.name}</td><td>${p.ailment}</td><td>${p.doctor_name||'Unassigned'}</td>` +
-        `<td><button class='btn btn-sm btn-outline-primary' onclick='editPatient(${p.id})'>Edit</button> `+
-        `<button class='btn btn-sm btn-outline-danger' onclick='deletePatient(${p.id})'>Delete</button></td>`;
-      tbody.appendChild(tr);
-    }
-  }catch(e){ alert('Error loading patients: '+e); }
-}
-async function addPatient(){ const name=prompt('Patient name:'); if(!name) return; const ailment=prompt('Ailment:')||''; const doctor_id=parseInt(prompt('Assign doctor ID (leave blank for none):')||'0')||0; await api('/api/patients','POST',{name,ailment,doctor_id}); loadPatients(); renderChart(); }
-async function editPatient(id){ try{ const data=await api('/api/patients/'+id); const name=prompt('Patient name:',data.name); if(name===null) return; const ailment=prompt('Ailment:',data.ailment); if(ailment===null) return; const doctor_id=parseInt(prompt('Assign doctor ID (0 for none):',data.doctor_id||0)||'0')||0; await api('/api/patients/'+id,'PUT',{name,ailment,doctor_id}); loadPatients(); renderChart(); }catch(e){ alert('Error: '+e); } }
-async function deletePatient(id){ if(!confirm('Delete patient #'+id+'?')) return; await api('/api/patients/'+id,'DELETE'); loadPatients(); renderChart(); }
-
-// Chart
-let chart=null;
-async function renderChart(){
-  try{
-    const json = await api('/api/chart');
-    const ctx = document.getElementById('barChart').getContext('2d');
-    if(chart) chart.destroy();
-    chart = new Chart(ctx, {
-      type: 'bar',
-      data: { labels: json.labels || [], datasets: [{ label: 'Patients', data: json.counts || [] }] },
-      options: { responsive:true, maintainAspectRatio:false }
-    });
-  }catch(e){ console.error(e); }
-}
-
-// init
-loadDoctors(); loadPatients(); renderChart();
-</script>
-</body>
-</html>
-)CROWHTML";
-
-    CROW_ROUTE(app, "/")( [] (const crow::request&){
-        crow::response res;
-        res.set_header("Content-Type","text/html; charset=utf-8");
-        res.body = index_html;
-        return res;
-    });
-
-    // Health endpoint
-    CROW_ROUTE(app, "/health").methods(crow::HTTPMethod::GET)([&](const crow::request&){
-        sqlite3* db = nullptr;
-        int rc = sqlite3_open_v2(DB_PATH, &db, SQLITE_OPEN_READWRITE, nullptr);
-        crow::json::wvalue out;
-        if (rc == SQLITE_OK) { out["status"] = "ok"; sqlite3_close(db); return crow::response(out); }
-        out["status"] = "db_error"; if (db) sqlite3_close(db); return crow::response(500);
-    });
-
-    // ---- Doctors CRUD ----
-    CROW_ROUTE(app, "/api/doctors").methods(crow::HTTPMethod::GET)([&](const crow::request&){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "SELECT id,name,specialty FROM doctors ORDER BY id";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        crow::json::wvalue arr; int idx = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            arr[idx]["id"] = sqlite3_column_int(stmt, 0);
-            const unsigned char* n = sqlite3_column_text(stmt, 1);
-            const unsigned char* s = sqlite3_column_text(stmt, 2);
-            arr[idx]["name"] = n ? reinterpret_cast<const char*>(n) : string("");
-            arr[idx]["specialty"] = s ? reinterpret_cast<const char*>(s) : string("");
-            ++idx;
-        }
-        sqlite3_finalize(stmt); sqlite3_close(db);
-        return crow::response(arr);
-    });
-
-    CROW_ROUTE(app, "/api/doctors/<int>").methods(crow::HTTPMethod::GET)([&](const crow::request&, int id){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "SELECT id,name,specialty FROM doctors WHERE id = ?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_int(stmt, 1, id);
-        if (sqlite3_step(stmt) != SQLITE_ROW) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(404); }
-        crow::json::wvalue item; item["id"] = sqlite3_column_int(stmt, 0); item["name"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)); item["specialty"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(item);
-    });
-
-    CROW_ROUTE(app, "/api/doctors").methods(crow::HTTPMethod::POST)([&](const crow::request& req){
-        auto body = crow::json::load(req.body); if (!body) return crow::response(400);
-        const string name = body["name"].s(); const string specialty = body["specialty"].s();
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "INSERT INTO doctors(name,specialty) VALUES(?,?)";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, specialty.c_str(), -1, SQLITE_TRANSIENT);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt); sqlite3_close(db);
-        crow::json::wvalue out; out["ok"] = true; return crow::response(201);
-    });
-
-    CROW_ROUTE(app, "/api/doctors/<int>").methods(crow::HTTPMethod::PUT)([&](const crow::request& req, int id){
-        auto body = crow::json::load(req.body); if (!body) return crow::response(400);
-        const string name = body["name"].s(); const string specialty = body["specialty"].s();
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "UPDATE doctors SET name=?,specialty=? WHERE id=?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, specialty.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 3, id);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(200);
-    });
-
-    CROW_ROUTE(app, "/api/doctors/<int>").methods(crow::HTTPMethod::DELETE)([&](int id){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "DELETE FROM doctors WHERE id = ?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_int(stmt, 1, id);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt);
-        const char* sql2 = "UPDATE patients SET doctor_id = 0 WHERE doctor_id = ?";
-        if (sqlite3_prepare_v2(db, sql2, -1, &stmt, nullptr) == SQLITE_OK) { sqlite3_bind_int(stmt, 1, id); sqlite3_step(stmt); sqlite3_finalize(stmt); }
-        sqlite3_close(db);
-        return crow::response(200);
-    });
-
-    // ---- Patients CRUD ----
-    CROW_ROUTE(app, "/api/patients").methods(crow::HTTPMethod::GET)([&](const crow::request&){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "SELECT p.id,p.name,p.ailment,p.doctor_id,d.name FROM patients p LEFT JOIN doctors d ON p.doctor_id=d.id ORDER BY p.id";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        crow::json::wvalue arr; int idx = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            arr[idx]["id"] = sqlite3_column_int(stmt, 0);
-            arr[idx]["name"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-            arr[idx]["ailment"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-            arr[idx]["doctor_id"] = sqlite3_column_int(stmt, 3);
-            const unsigned char* dn = sqlite3_column_text(stmt, 4);
-            if (dn) arr[idx]["doctor_name"] = reinterpret_cast<const char*>(dn);
-            ++idx;
-        }
-        sqlite3_finalize(stmt); sqlite3_close(db);
-        return crow::response(arr);
-    });
-
-    CROW_ROUTE(app, "/api/patients/<int>").methods(crow::HTTPMethod::GET)([&](const crow::request&, int id){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "SELECT id,name,ailment,doctor_id FROM patients WHERE id = ?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_int(stmt, 1, id);
-        if (sqlite3_step(stmt) != SQLITE_ROW) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(404); }
-        crow::json::wvalue item; item["id"] = sqlite3_column_int(stmt, 0); item["name"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1)); item["ailment"] = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2)); item["doctor_id"] = sqlite3_column_int(stmt, 3);
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(item);
-    });
-
-    CROW_ROUTE(app, "/api/patients").methods(crow::HTTPMethod::POST)([&](const crow::request& req){
-        auto body = crow::json::load(req.body); if (!body) return crow::response(400);
-        const string name = body["name"].s(); const string ailment = body["ailment"].s(); const int doctor_id = body["doctor_id"].i();
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "INSERT INTO patients(name,ailment,doctor_id) VALUES(?,?,?)";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, ailment.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 3, doctor_id);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(201);
-    });
-
-    CROW_ROUTE(app, "/api/patients/<int>").methods(crow::HTTPMethod::PUT)([&](const crow::request& req, int id){
-        auto body = crow::json::load(req.body); if (!body) return crow::response(400);
-        const string name = body["name"].s(); const string ailment = body["ailment"].s(); const int doctor_id = body["doctor_id"].i();
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "UPDATE patients SET name=?,ailment=?,doctor_id=? WHERE id=?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_text(stmt, 2, ailment.c_str(), -1, SQLITE_TRANSIENT);
-        sqlite3_bind_int(stmt, 3, doctor_id);
-        sqlite3_bind_int(stmt, 4, id);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(200);
-    });
-
-    CROW_ROUTE(app, "/api/patients/<int>").methods(crow::HTTPMethod::DELETE)([&](int id){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "DELETE FROM patients WHERE id = ?";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        sqlite3_bind_int(stmt, 1, id);
-        if (sqlite3_step(stmt) != SQLITE_DONE) { sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(500); }
-        sqlite3_finalize(stmt); sqlite3_close(db); return crow::response(200);
-    });
-
-    // ---- Chart endpoint ----
-    CROW_ROUTE(app, "/api/chart").methods(crow::HTTPMethod::GET)([&](const crow::request&){
-        std::lock_guard<std::mutex> lk(db_mtx);
-        sqlite3* db = nullptr; if (sqlite3_open(DB_PATH, &db) != SQLITE_OK) return crow::response(500);
-        const char* sql = "SELECT d.name, COUNT(p.id) FROM doctors d LEFT JOIN patients p ON p.doctor_id=d.id GROUP BY d.id ORDER BY d.id";
-        sqlite3_stmt* stmt = nullptr; if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) { sqlite3_close(db); return crow::response(500); }
-        crow::json::wvalue out; int i_labels = 0, i_counts = 0;
-        while (sqlite3_step(stmt) == SQLITE_ROW) {
-            const unsigned char* dn = sqlite3_column_text(stmt, 0);
-            out["labels"][i_labels++] = dn ? reinterpret_cast<const char*>(dn) : string("");
-            out["counts"][i_counts++] = sqlite3_column_int(stmt, 1);
-        }
-        sqlite3_finalize(stmt); sqlite3_close(db);
-        return crow::response(out);
-    });
-
-    // Bind to 0.0.0.0 so other containers/host can reach it
-    app.bindaddr("0.0.0.0").port(3000).multithreaded().run();
-    return 0;
-}
+ 
